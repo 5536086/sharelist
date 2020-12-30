@@ -12,10 +12,11 @@ const { parsePath , pathNormalize , enablePreview, enableRange , isRelativePath 
  * @return [boolean]
  */
 const isProxyPath = (path , paths) => {
+  const decodePath = decodeURIComponent(path)
   return (
-    path == '' ||  path == '/' || 
+    decodePath == '' ||  decodePath == '/' || 
     paths.length == 0 ||
-    paths.some(p => path.startsWith(p))
+    paths.some(p => decodePath.startsWith(decodeURIComponent(p)))
   ) ? true : false
 }
 
@@ -48,14 +49,14 @@ const enableDownload = (ctx, data) => {
  * @param {object} [data] folder/file data
  */
 const output = async (ctx , data)=>{
-
   const download = enableDownload(ctx, data)
 
   const { isPreview , isForward , isAdmin } = ctx.runtime
 
   //const downloadLinkAge = config.getConfig('max_age_download')
 
-  const proxyServer = config.getConfig('proxy_server')
+  // const proxyServer = config.getConfig('proxy_server')
+  const proxyServer = config.getProxyServer()
 
   const proxy_paths = config.getConfig('proxy_paths') || []
 
@@ -165,7 +166,7 @@ module.exports = {
 
     let base_url = ctx.path == '/' ? '' : ctx.path
     let parent = ctx.paths.length ? ('/' + ctx.paths.slice(0,-1).join('/')) : ''
-    let ignoreexts = (config.getConfig('ignore_file_extensions') || '').split(',')
+    let ignoreexts = config.getConfig('ignore_file_extensions') ? (config.getConfig('ignore_file_extensions') || '').split(',') : []
     let ignorefiles = (config.getConfig('ignore_files') || '').split(',')
     let anonymous_uplod_enable = !!config.getConfig('anonymous_uplod_enable')
     let ignorepaths = config.getIgnorePaths()
@@ -192,6 +193,18 @@ module.exports = {
         ctx.status = 404
         return
       }
+
+      // feat: #256
+      if( ctx.runtime.download ){
+        if( data.url ){
+          data.outputType = 'url'
+          await output(ctx , data)
+        }else{
+          ctx.status = 404
+        }
+        return
+      }
+
       let ret = { base_url , parent , data:[] }
 
       let preview_enable = config.getConfig('preview_enable')
@@ -208,6 +221,10 @@ module.exports = {
         if(sort.time){
           let r = sort.time == 'desc' ? 1 : -1
           data.children = data.children.sort((a,b) => a.updated_at > b.updated_at ? r : -r)
+        }
+        if(sort.name){
+          let r = sort.time == 'desc' ? 1 : -1
+          data.children = data.children.sort((a,b) => a.name > b.name ? r : -r)
         }
       }
 
@@ -245,7 +262,7 @@ module.exports = {
       }
       
       ret.writeable = data.writeable && (isAdmin || anonymous_uplod_enable)
-      
+      ret.downloadable = data.downloadable
       if( !ctx.webdav ){
         await ctx.renderSkin('index',ret)
       }
@@ -286,7 +303,7 @@ module.exports = {
    * API handler
    */
   async api(ctx){
-    let ignoreexts = (config.getConfig('ignore_file_extensions') || '').split(',')
+    let ignoreexts = config.getConfig('ignore_file_extensions') ? (config.getConfig('ignore_file_extensions') || '').split(',') : []
     let ignorefiles = (config.getConfig('ignore_files') || '').split(',')
     let anonymous_uplod_enable = !!config.getConfig('anonymous_uplod_enable')
     let ignorepaths = config.getIgnorePaths()

@@ -23,7 +23,7 @@ const xml2js = ( xml , options = {}) => {
 }
 
 const guessWebDAV = (ua) => {
-  return /(Microsoft\-WebDAV|FileExplorer|WinSCP|WebDAVLib|WebDAVFS|rclone)/i.test(ua)
+  return /(Microsoft\-WebDAV|FileExplorer|WinSCP|WebDAVLib|WebDAVFS|rclone|Kodi)/i.test(ua)
 }
 
 const webdavMethods = ['options','head','trace','get','put','post','delete','mkcol','propfind','proppatch','copy','move','lock','unlock']
@@ -36,6 +36,9 @@ const parseConfig = (str) => {
   }
   if(params.has('forward')){
     ret.isForward = true
+  }
+  if(params.has('download')){
+    ret.download = true
   }
   if(params.has('sort')){
     let s = params.get('sort')
@@ -51,6 +54,7 @@ const parseConfig = (str) => {
   return ret
 }
 module.exports = async(ctx, next) => {
+  console.log(ctx.request.headers['user-agent'])
   if (!ctx.session.access) {
     ctx.session.access = new Set()
   }
@@ -72,7 +76,6 @@ module.exports = async(ctx, next) => {
   }
   let runtime = {
     href:ctx.href,
-    path:ctx.path,
     querystring:ctx.querystring,
     query:ctx.query,
     body:ctx.request.body,
@@ -84,6 +87,7 @@ module.exports = async(ctx, next) => {
     paths:paths,
     isAdmin,
     access:ctx.session.access,
+    session:ctx.session,
     ...query
   }
   if( ctx.get('x-request') ){
@@ -106,7 +110,7 @@ module.exports = async(ctx, next) => {
   }
 
   ctx.runtime = runtime
-  setRuntime('req' , runtime)
+  setRuntime(runtime)
   /*
   setLocation({
     href:ctx.href,

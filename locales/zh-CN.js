@@ -19,7 +19,7 @@ module.exports = {
   "enable":"启用",
   "disable":"禁用",
   "clear_cache":"清除缓存",
-  "input_path_placeholder":"挂载路径(GoogleDrive/OneDrive 分享的文件夹ID、本地目录、虚拟目录文件地址)",
+  "input_path_placeholder":"挂载路径",
   "signin":"登录",
   "input_token":"输入口令",
   "proxy_enable":"中转（下载、预览）",
@@ -51,5 +51,8 @@ module.exports = {
   "signout":"登出",
   "anonymous_download":"下载限制",
   "anonymous_download_placeholder":"匹配正则表达式，留空表示允许下载任意文件。",
-  "index_enable":"目录索引"
+  "index_enable":"目录索引",
+  "smb_server_enable":"SMB 服务",
+  "smb_server_port":"SMB 端口",
+  "smb_anonymous_enable":"SMB 允许匿名访问"
 }

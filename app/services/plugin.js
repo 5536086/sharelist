@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const querystring = require('querystring')
-const {getFileType , getMIME , isArray , isObject , params , base64 , getRandomIP , retrieveSize , extname , pathNormalize } = require('../utils/base')
+const {getFileType , getMIME , isArray , isObject , params , base64 , getRandomIP , retrieveSize , extname , pathNormalize, parseStream , xml2json , match } = require('../utils/base')
 const format = require('../utils/format')
 const cache = require('../utils/cache')
 const http = require('../utils/http')
@@ -10,6 +10,7 @@ const { sendFile , sendHTTPFile ,sendStream, getFile, getHTTPFile } = require('.
 const wrapReadableStream = require('../utils/wrapReadableStream')
 const rectifier = require ('../utils/rectifier')
 const chunkStream = require('../utils/chunkStream')
+const bonjour = require('bonjour')()
 
 const assign = (...rest) => Object.assign(...rest)
 
@@ -44,6 +45,8 @@ const whenReady = (handler) => {
     })
   }
 }
+
+
 
 const isClass = fn => typeof fn == 'function' && /^\s*class/.test(fn.toString());
 
@@ -145,12 +148,17 @@ const recognize = async (image , type, lang) => {
 const getSource = async (id , driverName , data) => {
   if(driveMap.has(driverName)){
     let vendor = getDrive(driverName)
-    let d = await vendor.file(id , { req: config.getRuntime('req') , data } )
+    let d = await vendor.file(id , { req: config.getRuntime() , data } )
     if(d.outputType === 'file'){
       return await getFile(d.url)
     }
-    else if(d.outputType === 'stream' && vendor.stream){
-      return await vendor.stream(id , {contentFormat:true});
+    else if(d.outputType === 'stream'){
+      if(vendor.createReadStream){
+        return await parseStream( await vendor.createReadStream({id}) )
+      }
+    }
+    else if(d.content){
+      return d.content
     }
     else{
       return await getHTTPFile(d.url , d.headers || {})
@@ -169,8 +177,8 @@ const getStream = async (ctx , id ,type, protocol , data) => {
   }
   else if(type === 'stream'){
     let vendor = getDrive(protocol)
-    if(vendor && vendor.stream){
-      return await sendStream(ctx , id , vendor.stream , data);
+    if(vendor && vendor.createReadStream){
+      return await sendStream(ctx , id , (...rest) => vendor.createReadStream(...rest) , data);
     }
   }
   else{
@@ -186,7 +194,7 @@ const getStream = async (ctx , id ,type, protocol , data) => {
 const getPreview = async (data) => {
   let ext = data.ext
   let name = previewMap.get(ext)
-  return name ? await resources[name].preview[ext](data , config.getRuntime('req')) : null
+  return name ? await resources[name].preview[ext](data , config.getRuntime()) : null
 }
 
 const isPreviewable = async (data) => {
@@ -237,6 +245,8 @@ const getHelpers = (id) => {
     rectifier,
     chunkStream,
     recognize,
+    xml2json,
+    match:match,
     getOption:()=>{
 
     },
@@ -282,16 +292,22 @@ const getHelpers = (id) => {
 /**
  * 加载插件
  */
-var loadOptions = []
+var loadOptions = {}
 const load = (options) => {
   loadOptions = options
-  const dir = options.dir
-  const dirs = options.dirs
+
+  let { dir, dirs , ...rest } = options
 
   if (dir && dirs.indexOf(dir) === -1) {
     dirs.push(dir)
   }
-  
+
+  const services = { ...rest }
+  services.command = command
+  services.setRuntime = config.setRuntime
+  services.getConfig = config.getConfig
+  services.bonjour = bonjour
+  services.sendStream = getStream
   for (let i = 0; i < dirs.length; i++) {
     const p = dirs[i]
     if (!fs.existsSync(p)) {
@@ -317,7 +333,7 @@ const load = (options) => {
 
         let resource
         if( isClass(ins) ){
-          let driver = new ins(helpers)
+          let driver = new ins(helpers,services)
           let { protocol , mountable , createReadStream , createWriteStream } = driver
           driver.helper = helpers
           resources[id] = {
@@ -392,8 +408,36 @@ const load = (options) => {
   ready = true
 }
 
+var endpoints = []
+const loader = (type, ...rest) => {
+  if( type == 'plugin' ){
+    load(...rest)
+  }else{
+    const files = fs.readdirSync(path.resolve(__dirname,'../../'+type))
+    const services = { ...rest[0] }
+    services.command = command
+    services.setRuntime = config.setRuntime
+    services.getConfig = config.getConfig
+    services.bonjour = bonjour
+    services.sendStream = getStream
+
+    for (let i = 0; i<files.length;i++) {
+      let filepath = path.join(path.resolve(__dirname,'../../'+type),files[i])
+      let instance = new (require(filepath))(services)
+      let name = instance.name || (type+'_' + files[i].replace(/\./g,'_'))
+      endpoints.push( instance )
+      console.log(`Load ${type}: ${name}`)
+    }
+  }
+}
+
 const reload = () => {
   load(loadOptions)
+  if( endpoints ){
+    for(let endpoint of endpoints){
+      endpoint.restart()
+    }
+  }
 }
 /**
  * 根据协议获取可处理的驱动
@@ -455,8 +499,7 @@ const updateFolder = (folder) => {
         let ext  = tmp[tmp.length-2]
 
         //目录快捷方式 name.d.ln
-        let isDir = len > 2 && ext == 'd'
-
+        let isDir = (len > 2 && ext == 'd') || driveMap.has(ext)
         if(isDir){
           d.name = tmp.slice(0,-2).join('.')
           d.type = 'folder'
@@ -504,12 +547,12 @@ const updateFolder = (folder) => {
  * 调用解析器处理
  */
 const updateLnk = async (d) => {
+
   //获取快捷方式的指向内容
   const content = await getSource(d.id , d.protocol)
   //分析内容实体
   const meta = parseLnk(content)
   //从id中猜测协议
-
   //包含协议时
   if(meta){
     d.protocol = meta.protocol
@@ -518,8 +561,7 @@ const updateLnk = async (d) => {
   //不包含协议
   else{
     //从 id 猜测协议
-    let protocol = d.id.split('.').pop()
-
+    let protocol = d.id.replace(/\.ln/,'').split('.').pop()
     if(driveMap.has(protocol)){
       d.protocol = protocol
       d.content = content
@@ -551,7 +593,12 @@ const getAuth = (type) => {
   if( authMap.has(type) ){
     return resources[ authMap.get(type) ].auth[type]
   }else{
-    return false
+    let drive = getDrive(type)
+    if(drive && drive.auth){
+      return drive.auth
+    }else{
+      return false
+    }
   }
 }
 //
@@ -588,4 +635,5 @@ const createWriteStream = async (options) => {
   }
 }
 
-module.exports = { load , reload , getDrive , getStream , getSource , updateFolder , updateFile , updateLnk , getVendors , getAuth , getPreview , isPreviewable , command}
+
+module.exports = { load , reload , getDrive , getStream , getSource , updateFolder , updateFile , updateLnk , getVendors , getAuth , getPreview , isPreviewable , command , loader , bonjour}
