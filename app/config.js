@@ -58,7 +58,9 @@ const db = createFiledb(configPath , {raw:true} , {
   
   smb_server_port:8445,
 
-  smb_anonymous_enable:true
+  smb_anonymous_enable:true,
+
+  theme:'default',
 });
 
 if(process.env.PORT){
@@ -68,7 +70,7 @@ if(process.env.PORT){
 const save = async (d) => db.set(d)
 
 const installed = () => {
-  return db.get('path') && db.get('token')
+  return !!db.get('token')
 }
 
 const getConfig = (key) => db.get(key)
@@ -80,7 +82,7 @@ const setIgnorePaths = (key , paths) => {
 }
 
 const getIgnorePaths = (key , paths) => {
-  return [].concat(...Object.values(db.get('ignore_paths') || {}))
+  return [].concat(...Object.values(db.get('ignore_paths') || {})).filter(i => !!i)
 }
 
 
@@ -96,6 +98,12 @@ const setRuntime = (value) => {
 
 const getSkin = (key) => {
   return db.get('skin') || 'default'
+}
+
+const setSkin = (name) => {
+  if( name != getSkin('skin') ){
+    save({skin:key})
+  }
 }
 
 const getPluginOption = (key) => {
@@ -178,4 +186,4 @@ const checkAccess = (token) => {
   return token === db.get('token')
 }
 
-module.exports = { getConfig, setIgnorePaths, getIgnorePaths, getAllConfig, save , installed , getPath , setRuntime , getRuntime , saveDrive , getDrive , getSkin , getDrives , getPluginOption , setPluginOption , checkAccess , getProxyServer }
+module.exports = { getConfig, setIgnorePaths, getIgnorePaths, getAllConfig, setConfig:save, save , installed , getPath , setRuntime , getRuntime , saveDrive , getDrive , getSkin , getDrives , getPluginOption , setPluginOption , checkAccess , getProxyServer }

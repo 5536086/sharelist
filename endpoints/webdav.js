@@ -66,6 +66,7 @@ const dateFormat = (d) => {
 const propsCreate = (data, options) => {
   let out = ''
   let { props, ns: { name, value } } = options
+  if( name ) name = name + ':'
   for (let key in props) {
 
     // TODO getlastmodified format: 
@@ -75,25 +76,25 @@ const propsCreate = (data, options) => {
     if (key == 'getlastmodified' && data.updated_at) {
       let getlastmodified = dateFormat(data.updated_at)
       if (getlastmodified) {
-        out += `<${name}:${key}>${getlastmodified}</${name}:${key}>`
+        out += `<${name}${key}>${getlastmodified}</${name}${key}>`
       }
     }
     if (key == 'displayname') {
-      out += `<${name}:${key}>${data.name.replace(/&/g,'&amp;').replace(/\</g,'&lt;')}</${name}:${key}>`
+      out += `<${name}${key}>${data.name.replace(/&/g,'&amp;').replace(/\</g,'&lt;')}</${name}${key}>`
     }
     if (key == 'getcontentlength') {
-      out += `<${name}:${key}>${parseInt(data.size || 0)}</${name}:${key}>`
+      out += `<${name}${key}>${parseInt(data.size || 0)}</${name}${key}>`
     }
     if (key == 'resourcetype') {
-      out += `<${name}:${key}>${data.type == 'folder' ? `<${name}:collection/>` : ''}</${name}:${key}>`
+      out += `<${name}${key}>${data.type == 'folder' ? `<${name}collection/>` : ''}</${name}${key}>`
     }
     if (key == 'getcontenttype' && data.type != 'folder') {
-      out += `<${name}:${key}>${data.mime}</${name}:${key}>`
+      out += `<${name}${key}>${data.mime}</${name}${key}>`
     }
     if (key == 'creationdate' && data.created_at) {
       let creationdate = dateFormat(data.created_at)
       if (creationdate) {
-        out += `<${name}:${key}>${creationdate}</${name}:${key}>`
+        out += `<${name}${key}>${creationdate}</${name}${key}>`
       }
     }
   }
@@ -114,8 +115,8 @@ const propfindParse = (data, ns) => {
 
   let findprop_ns = nsParse(data)
   let method = Object.keys(data)[0].split(':').pop() || 'propfind'
+  let fp_ns_name = findprop_ns && findprop_ns.name ? `${findprop_ns.name}:` : ''
 
-  let fp_ns_name = findprop_ns ? `${findprop_ns.name}:` : ''
   let props = {}
   if(data[`${fp_ns_name}${method}`]['$$'].hasOwnProperty(`${fp_ns_name}allprop`)){
     return default_options
@@ -149,9 +150,9 @@ const nsParse = (data) => {
   if (data['$']) {
     let attrs = Object.keys(data['$']),
       ns_name, ns_val
-    let hit = attrs.find(i => /xmlns\:/.test(i))
+    let hit = attrs.find(i => /xmlns\:?/.test(i))
     if (hit) {
-      ns_name = hit.split(':')[1]
+      ns_name = hit.split(':')[1] || ''
       ns_val = data['$'][hit]
       return { name: ns_name, value: ns_val }
     }
@@ -170,15 +171,15 @@ const nsParse = (data) => {
  * @return {string} XML string
  */
 const respCreate = (data, options) => {
-  let { props, path, ns: { name, value } } = options
+  let { props, path, basePath = '', ns: { name, value } } = options
 
   let body = `<?xml version="1.0" encoding="utf-8" ?>`
 
   let xmlns = name ? `${name}:` : ''
-  body += `<${xmlns}multistatus${name ? (' xmlns:'+name+'="'+value+'"') : ''}>`
+  body += `<${xmlns}multistatus xmlns${name ? (':'+name) : '' }="${value}">`
   data.forEach(file => {
     if (file.hidden !== true) {
-      let href = (/*file.href ||*/ (path+'/'+encodeURIComponent(file.name))).replace(/\/{2,}/g, '/') //path +'/' + encodeURIComponent(file.name)
+      let href = (/*file.href ||*/ (basePath+path+'/'+encodeURIComponent(file.name))).replace(/\/{2,}/g, '/') //path +'/' + encodeURIComponent(file.name)
       //console.log(props)
       let res = propsCreate(file, options)
       body += `<${xmlns}response><${xmlns}href>${href}</${xmlns}href><${xmlns}propstat><${xmlns}status>HTTP/1.1 200 OK</${xmlns}status><${xmlns}prop>${res}</${xmlns}prop></${xmlns}propstat></${xmlns}response>`
@@ -194,7 +195,8 @@ const propfind = async (config,app) => {
   let options = propfindParse(config.data)
   options.path = config.path
   options.depth = config.depth
-
+  options.basePath = config.basePath
+  
   let data = await app.command('ls', config.path)
   
   if(!data){
@@ -234,11 +236,11 @@ const propfind = async (config,app) => {
     }
   } else {
     let files = data.children
-    if( this.incompatibleUserAgents ){
+    //if( incompatibleUserAgents ){
       files.unshift({
         type: 'folder', href : this.path , name:data.name || '._'
       })
-    }
+    //}
     return {
       status : '207 Multi-Status',
       body: respCreate(files, options)
@@ -246,11 +248,15 @@ const propfind = async (config,app) => {
   }
 }
 
+const copy = async (config,app) => {
+  console.log(config)
+}
+
 const WebDAVResponse = async (config , app) => {
-  const allows = ['GET', 'HEAD', 'OPTIONS', 'PROPFIND']
+  const allows = ['GET', 'HEAD', 'OPTIONS', 'PROPFIND' , 'COPY']
   const httpAuthRealm = "ShareList WebDAV"
 
-  let { path, method , depth } = config
+  let { path, method , depth , req } = config
   console.log('WebDAV',method)
   if( method == 'propfind' ){
     return await propfind(config , app)
@@ -262,8 +268,6 @@ const WebDAVResponse = async (config , app) => {
     }
   }
   else if(method == 'options'){
-    const { allows } = this
-
     let dav = [1]
 
     if (allows.includes('LOCK')) {
@@ -279,9 +283,22 @@ const WebDAVResponse = async (config , app) => {
       status:'200 OK'
     }
   }
-  else if( method == 'get'){
+  else if( method == 'get' ){
     return await get(config,app)
-  }else{
+  }
+  else if( method == 'put' ){
+    // upload
+    // let data = await app.command('ls', config.path)
+    req.pause()
+    let { driver , id } = await app.getDriver(config.path)
+    if( driver.createWriteStream ){
+      console.log(config.path)
+      let stream = await driver.createWriteStream({id}) 
+      console.log(stream)
+      req.pipe(stream)
+    }
+  }
+  else{
     return {
       status:'405 Method not allowed',
       headers:{
@@ -304,6 +321,7 @@ class WebDAV {
   start(){
     let { app , path } = this
     let port = app.getConfig('port')
+    let sitename = app.getConfig('title')
 
     app.web().use(async (ctx,next) => {
       let url = ctx.req.url
@@ -316,20 +334,28 @@ class WebDAV {
       }
     })
 
-    this.zeroconf = app.bonjour.publish({ name: 'ShareList WebDAV', type: 'webdav', port, txt: { path } })
+    this.zeroconf = app.bonjour.publish({ name: `ShareList WebDAV(${sitename})`, type: 'webdav', port, txt: { path } })
   }
 
   async onRequest(ctx,next , url){
-    let json = await xml2js(await parser(ctx.req),{
-      explicitChildren:true,
-      explicitArray:false
-    })
+    console.log(ctx.headers , ctx.method)
+    let { headers } = ctx
 
+    let method = ctx.method.toLowerCase()
     let webdavData = {
-      data:json , 
+      data:{} , 
       depth:ctx.get('depth'),
-      method:ctx.method.toLowerCase(),
-      path:url
+      method,
+      path: url,
+      basePath: this.path,
+      req:ctx.req
+    }
+
+    if( method == 'get' || method == 'propfind' ){
+      webdavData.data = await xml2js(await parser(ctx.req),{
+        explicitChildren:true,
+        explicitArray:false
+      })
     }
 
     let resp
@@ -354,7 +380,7 @@ class WebDAV {
 
     if(resp.body){
       ctx.type = 'text/xml; charset="utf-8"'
-      ctx.set('Content-Length', resp.body.length);
+      ctx.set('Content-Length', resp.body.length)
       ctx.body = resp.body
     }
     else if(resp.stream){
